@@ -1,10 +1,12 @@
 import axios, {
-    AxiosInstance,
-    AxiosRequestConfig,
-    AxiosResponse,
     AxiosError,
+} from 'axios';
+import type { 
+    AxiosInstance, 
+    AxiosRequestConfig, 
+    AxiosResponse,
     InternalAxiosRequestConfig,
-    Method,
+    Method, 
 } from 'axios';
 
 /**
@@ -26,12 +28,52 @@ export interface RequestOptions extends RequestConfig {
 }
 
 /**
- * 响应数据结构（可调整）
+ * 统一响应数据结构
+ * - code:    状态码（0 表示成功；其他值为错误码，错误时优先用后端业务码，无业务码时用 HTTP 状态码）
+ * - data:    业务数据本体
+ * - message: 提示信息（成功/失败描述）
+ * - success: 是否成功（code === 0 时为 true）
  */
 export interface ResponseData<T = any> {
     code: number;
     data: T;
     message: string;
+    success: boolean;
+}
+
+/**
+ * 判断后端返回值是否已经是标准结构 { code, data, message }
+ */
+function isStandardBackendData(value: unknown): value is { code: number; data: any; message?: string } {
+    return (
+        !!value &&
+        typeof value === 'object' &&
+        'code' in (value as any) &&
+        'data' in (value as any)
+    );
+}
+
+/**
+ * 把任意后端返回值包装成统一 ResponseData
+ * - 后端返回标准结构 { code, data, message } 时沿用业务 code
+ * - 后端直接返回数据（数组/对象/原始值）时整体作为 data，code 置 0
+ */
+function wrapResponse<T>(response: AxiosResponse<T>): ResponseData<T> {
+    const backendData = response.data as unknown;
+    if (isStandardBackendData(backendData)) {
+        return {
+            code: backendData.code,
+            data: backendData.data,
+            message: backendData.message || '',
+            success: backendData.code === 0,
+        };
+    }
+    return {
+        code: 0,
+        data: backendData as T,
+        message: '',
+        success: true,
+    };
 }
 
 /**
@@ -74,79 +116,97 @@ export class Request {
             }
         );
 
-        // 响应拦截器
+        // 响应拦截器：统一把原始响应包装成 ResponseData
         this.instance.interceptors.response.use(
             (response) => {
                 if (options.onResponse) return options.onResponse(response);
-                return response.data;
+                return wrapResponse(response);
             },
             (error) => {
                 if (options.onResponseError) return options.onResponseError(error);
+                const status: number = error?.response?.status ?? 0;
+                const backendData: unknown = error?.response?.data;
+                // 后端在错误体里给了标准结构，沿用其 code/message/data
+                if (isStandardBackendData(backendData)) {
+                    return Promise.reject({
+                        code: backendData.code,
+                        status,
+                        data: backendData.data,
+                        message: backendData.message || error.message,
+                        success: false,
+                    } as ResponseData);
+                }
                 console.error('Request Error:', error.message);
-                return Promise.reject(error);
+                return Promise.reject({
+                    code: status,
+                    status,
+                    data: null,
+                    message: error?.message || '请求失败',
+                    success: false,
+                } as ResponseData);
             }
         );
     }
 
     /**
      * 通用请求方法（支持配置对象）
-     * 用法：request.request({ url: '/api/user', method: 'post', data })
+     * 返回统一结构 ResponseData<T>：{ code, status, data, message, success }
      */
-    async request<T = any>(options: RequestOptions): Promise<T> {
+    async request<T = any>(options: RequestOptions): Promise<ResponseData<T>> {
         const { url, method = 'GET', ...config } = options;
         return this.instance.request<T>({
             url,
             method,
             ...config,
-        });
+        }) as unknown as Promise<ResponseData<T>>;
     }
 
     /**
      * GET 请求
      */
-    get<T = any>(url: string, config?: RequestConfig): Promise<T> {
-        return this.instance.get(url, config);
+    async get<T = any>(url: string, config?: AxiosRequestConfig): Promise<ResponseData<T>> {
+        return this.instance.get<T>(url, config) as unknown as Promise<ResponseData<T>>;
     }
 
     /**
      * POST 请求
      */
-    post<T = any>(url: string, data?: any, config?: RequestConfig): Promise<T> {
-        return this.instance.post(url, data, config);
+    async post<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<ResponseData<T>> {
+        return this.instance.post<T>(url, data, config) as unknown as Promise<ResponseData<T>>;
     }
 
     /**
      * PUT 请求
      */
-    put<T = any>(url: string, data?: any, config?: RequestConfig): Promise<T> {
-        return this.instance.put(url, data, config);
+    async put<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<ResponseData<T>> {
+        return this.instance.put<T>(url, data, config) as unknown as Promise<ResponseData<T>>;
     }
 
     /**
      * DELETE 请求
      */
-    delete<T = any>(url: string, config?: RequestConfig): Promise<T> {
-        return this.instance.delete(url, config);
+    async delete<T = any>(url: string, config?: AxiosRequestConfig): Promise<ResponseData<T>> {
+        return this.instance.delete<T>(url, config) as unknown as Promise<ResponseData<T>>;
     }
 
     /**
      * PATCH 请求
      */
-    patch<T = any>(url: string, data?: any, config?: RequestConfig): Promise<T> {
-        return this.instance.patch(url, data, config);
+    async patch<T = any>(url: string, data?: any, config?: AxiosRequestConfig): Promise<ResponseData<T>> {
+        return this.instance.patch<T>(url, data, config) as unknown as Promise<ResponseData<T>>;
     }
 
     /**
      * 文件上传（FormData）
      */
-    upload<T = any>(url: string, formData: FormData, config?: RequestConfig): Promise<T> {
-        return this.instance.post(url, formData, {
+    async upload<T = any>(url: string, formData: FormData, config?: AxiosRequestConfig): Promise<ResponseData<T>> {
+        return this.instance.post<T>(url, formData, {
             ...config,
             headers: {
                 'Content-Type': 'multipart/form-data',
                 ...(config?.headers || {}),
             },
-        });
+        }) as unknown as Promise<ResponseData<T>>;
     }
 
     /**
@@ -167,10 +227,37 @@ export class Request {
     }
 }
 
+/**
+ * 从 localStorage 读取认证 token（与 oa-auth 的存储约定保持一致）
+ * 存储键：oa_auth_storage，结构：{ token, refreshToken, expiresAt, user }
+ */
+function getAuthToken(): string | null {
+    try {
+        const raw = localStorage.getItem('oa_auth_storage');
+        if (!raw) return null;
+        const stored = JSON.parse(raw) as { token?: string; expiresAt?: number };
+        if (!stored?.token) return null;
+        // token 已过期则不携带
+        if (typeof stored.expiresAt === 'number' && stored.expiresAt <= Date.now()) {
+            return null;
+        }
+        return stored.token;
+    } catch {
+        return null;
+    }
+}
+
 // 默认实例
 export const request = new Request({
     baseURL: import.meta?.env?.VITE_API_BASE_URL || '',
     timeout: 10000,
+    onRequest: (config) => {
+        const token = getAuthToken();
+        if (token) {
+            (config.headers as Record<string, string>)['Authorization'] = `Bearer ${token}`;
+        }
+        return config;
+    },
 });
 
 // 导出类型

@@ -1,0 +1,9 @@
+export declare const isString: (value: unknown) => boolean;
+export declare const isNumber: (value: unknown) => boolean;
+export declare const isBoolean: (value: unknown) => boolean;
+export declare const isObject: (value: unknown) => boolean;
+export declare const isEmpty: (value: unknown) => boolean;
+export declare const isURL: (url: string) => boolean;
+export declare const isEmail: (email: string) => boolean;
+export declare const isPhone: (phone: string) => boolean;
+export declare const isIdCard: (id: string) => boolean;

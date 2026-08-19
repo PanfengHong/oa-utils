@@ -1,13 +1,14 @@
 import axios, {
     AxiosError,
 } from 'axios';
-import type { 
-    AxiosInstance, 
-    AxiosRequestConfig, 
+import type {
+    AxiosInstance,
+    AxiosRequestConfig,
     AxiosResponse,
     InternalAxiosRequestConfig,
-    Method, 
+    Method,
 } from 'axios';
+import { matchMock } from './mock';
 
 /**
  * 自定义请求配置（扩展 AxiosRequestConfig）
@@ -29,16 +30,16 @@ export interface RequestOptions extends RequestConfig {
 
 /**
  * 统一响应数据结构
- * - code:    状态码（0 表示成功；其他值为错误码，错误时优先用后端业务码，无业务码时用 HTTP 状态码）
+ * - code:    状态码（200 表示成功；其他值为错误码，错误时优先用后端业务码，无业务码时用 HTTP 状态码）
  * - data:    业务数据本体
  * - message: 提示信息（成功/失败描述）
- * - success: 是否成功（code === 0 时为 true）
+ *
+ * 注：response 不包含 success 字段，成功与否统一用 code === 200 判断。
  */
 export interface ResponseData<T = any> {
     code: number;
     data: T;
     message: string;
-    success: boolean;
 }
 
 /**
@@ -56,7 +57,7 @@ function isStandardBackendData(value: unknown): value is { code: number; data: a
 /**
  * 把任意后端返回值包装成统一 ResponseData
  * - 后端返回标准结构 { code, data, message } 时沿用业务 code
- * - 后端直接返回数据（数组/对象/原始值）时整体作为 data，code 置 0
+ * - 后端直接返回数据（数组/对象/原始值）时整体作为 data，code 置 200（视为成功）
  */
 function wrapResponse<T>(response: AxiosResponse<T>): ResponseData<T> {
     const backendData = response.data as unknown;
@@ -65,14 +66,12 @@ function wrapResponse<T>(response: AxiosResponse<T>): ResponseData<T> {
             code: backendData.code,
             data: backendData.data,
             message: backendData.message || '',
-            success: backendData.code === 0,
         };
     }
     return {
-        code: 0,
+        code: 200,
         data: backendData as T,
         message: '',
-        success: true,
     };
 }
 
@@ -133,7 +132,6 @@ export class Request {
                         status,
                         data: backendData.data,
                         message: backendData.message || error.message,
-                        success: false,
                     } as ResponseData);
                 }
                 console.error('Request Error:', error.message);
@@ -142,7 +140,6 @@ export class Request {
                     status,
                     data: null,
                     message: error?.message || '请求失败',
-                    success: false,
                 } as ResponseData);
             }
         );
@@ -150,10 +147,24 @@ export class Request {
 
     /**
      * 通用请求方法（支持配置对象）
-     * 返回统一结构 ResponseData<T>：{ code, status, data, message, success }
+     * 返回统一结构 ResponseData<T>：{ code, data, message }（code === 200 表示成功）
+     *
+     * 若 mock 已启用且 URL 命中已注册的 mock 规则，则直接短路返回 mock 数据，不发起真实请求。
      */
     async request<T = any>(options: RequestOptions): Promise<ResponseData<T>> {
-        const { url, method = 'GET', ...config } = options;
+        const { url, method = 'GET', data, params } = options;
+
+        // mock 拦截：命中则短路返回
+        const mocked = matchMock(String(method), url, {
+            query: params || {},
+            body: data,
+            headers: {},
+        });
+        if (mocked !== null) {
+            return Promise.resolve(mocked as ResponseData<T>);
+        }
+
+        const { url: _u, method: _m, ...config } = options;
         return this.instance.request<T>({
             url,
             method,

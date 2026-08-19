@@ -6,3 +6,4 @@ export * from './object';
 export * from './storage';
 export * from './http';
 export * from './request';
+export * from './mock';
